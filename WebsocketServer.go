@@ -1,6 +1,7 @@
 package gows
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,7 +17,6 @@ import (
 
 type WebsocketServer struct {
 	upgrader               *websocket.Upgrader
-	port                   int
 	requestId_propertyName string
 
 	nextClientId int64 // Next client ID to assign
@@ -31,18 +31,18 @@ type WebsocketServer struct {
 	OnError EventEmitter[Error]
 	OnClose EventEmitter[CloseEvent]
 
-	OnAnyMessage EventEmitter[Message]
+	OnAnyMessage EventEmitter[IncomingMessage]
 
 	// This is an eventEmitter for incoming requests from the client socket
-	OnRequest EventEmitter[Message]
+	OnRequest EventEmitter[ServerIncomingRequest]
 	// This is an eventEmitter for incoming response from the client socket of a request sent from the server
-	OnRequestResponse EventEmitter[Message]
+	OnRequestResponse EventEmitter[IncomingMessage]
 
 	// In order to register the parsed messages
 	MessageParserRegistry messageParsers_Registry
-	OnParsedMessage       EventEmitter[Message]
+	OnParsedMessage       EventEmitter[IncomingMessage]
 
-	OnMessage EventEmitter[Message]
+	OnMessage EventEmitter[IncomingMessage]
 }
 
 func (ws_server *WebsocketServer) SetCheckOriginFunc(checkOriginFunc func(r *http.Request) bool) {
@@ -74,12 +74,12 @@ func (ws_server *WebsocketServer) GetRequestIdProperty() string {
 }
 
 // Create a function to create a new websocket server, with a given address and port
-func NewWebSocketServer(port int, checkOriginFunc func(r *http.Request) bool) *WebsocketServer {
+func NewWebSocketServer(checkOriginFunc func(r *http.Request) bool) *WebsocketServer {
 	websocketServer := &WebsocketServer{
-		port:                   port,
 		requestId_propertyName: "Id",
 	}
 	websocketServer.SetCheckOriginFunc(checkOriginFunc)
+	websocketServer.Clients.Map = make(map[int64]*WebsocketConnection)
 
 	return websocketServer
 }
@@ -99,6 +99,7 @@ func (ws_server *WebsocketServer) onConnect(w http.ResponseWriter, r *http.Reque
 		Conn:        conn,
 		OrigRequest: r,
 	}
+	ws_connection.requestResponseAwaiters.Map = make(map[int64]requestResponseAwaiter)
 	ws_server.nextClientId++
 
 	// Adding the client
@@ -138,7 +139,7 @@ func (ws_server *WebsocketServer) onConnect(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 
-		ws_server.OnAnyMessage.emit(Message{Connection: ws_connection, Message: msg})
+		ws_server.OnAnyMessage.emit(IncomingMessage{Connection: ws_connection, Message: msg})
 		ws_connection.OnAnyMessage.emit(SocketMessage{Message: msg})
 
 		ws_connection.handleMessage(msg)
@@ -150,7 +151,7 @@ func (ws_server *WebsocketServer) onConnect(w http.ResponseWriter, r *http.Reque
 // This function is blocking and will not return until the server is stopped.
 //
 // If no paths are provided, it will listen on the root path ("/").
-func (ws_server *WebsocketServer) Listen(paths ...string) error {
+func (ws_server *WebsocketServer) Listen(port int, paths ...string) error {
 	for _, path := range paths {
 		http.HandleFunc(path, ws_server.onConnect)
 	}
@@ -158,7 +159,7 @@ func (ws_server *WebsocketServer) Listen(paths ...string) error {
 		http.HandleFunc("/", ws_server.onConnect)
 	}
 
-	err := http.ListenAndServe(fmt.Sprintf(":%d", ws_server.port), nil)
+	err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 	return err
 }
 
@@ -182,7 +183,7 @@ type WebsocketConnection struct {
 	OnAnyMessage EventEmitter[SocketMessage]
 
 	// This is an eventEmitter for incoming requests from the client socket
-	OnRequest EventEmitter[SocketMessage]
+	OnRequest EventEmitter[IncomingRequest]
 
 	// This is an eventEmitter for incoming response from the client socket of a request sent from the server
 	OnRequestResponse EventEmitter[SocketMessage]
@@ -217,32 +218,49 @@ func (ws_connection *WebsocketConnection) handleMessage(msg []byte) {
 	// Checking for private messages
 	//
 	// If found, send the []byte to the channel waiting for it
+	decoderInt64 := json.NewDecoder(bytes.NewReader(msg))
+	decoderInt64.UseNumber()
 	isRequestResponse := false
 	isRequest := false
-	var parsedData map[string]int64
-	err := json.Unmarshal(msg, &parsedData)
+	var parsedData map[string]interface{}
+	err := decoderInt64.Decode(&parsedData)
 	if err == nil {
-		received_requestId, isPresent := parsedData[ws_connection.parent.requestId_propertyName]
+		received_requestId_interface, isPresent := parsedData[ws_connection.parent.requestId_propertyName]
+		var received_requestId int64
+		ok := false
 		if isPresent {
+			switch v := received_requestId_interface.(type) {
+			case json.Number:
+				received_requestId, err = v.Int64()
+				if err == nil {
+					ok = true
+				}
+			case float64:
+				received_requestId = int64(v)
+				ok = true
+			}
+		}
+		if ok {
 			ws_connection.requestResponseAwaiters.Mu.Lock()
 			responseAwaiter, exists := ws_connection.requestResponseAwaiters.Map[received_requestId]
+			ws_connection.requestResponseAwaiters.Mu.Unlock()
+			fmt.Printf("[SERVER] ResponseAwaiter: %v, exists: %v\n", responseAwaiter, exists)
 			if exists {
 				responseAwaiter.channel <- msg
 				isRequestResponse = true
 			} else {
-
+				ws_connection.parent.OnRequest.emit(ServerIncomingRequest{requestId: received_requestId, propertyName: ws_connection.parent.requestId_propertyName, WebsocketConnection: ws_connection, Data: msg})
+				ws_connection.OnRequest.emit(IncomingRequest{requestId: received_requestId, propertyName: ws_connection.parent.requestId_propertyName, conn: ws_connection.Conn, Data: msg})
+				isRequest = true
 			}
-			ws_connection.requestResponseAwaiters.Mu.Unlock()
 		}
 	}
 	if isRequestResponse {
-		ws_connection.parent.OnRequestResponse.emit(Message{Connection: ws_connection, Message: msg})
+		ws_connection.parent.OnRequestResponse.emit(IncomingMessage{Connection: ws_connection, Message: msg})
 		ws_connection.OnRequestResponse.emit(SocketMessage{Message: msg})
 		return
 	}
 	if isRequest {
-		ws_connection.parent.OnRequest.emit(Message{Connection: ws_connection, Message: msg})
-		ws_connection.OnRequest.emit(SocketMessage{Message: msg})
 		return
 	}
 
@@ -256,12 +274,12 @@ func (ws_connection *WebsocketConnection) handleMessage(msg []byte) {
 	}
 
 	if isParsedMessage {
-		ws_connection.parent.OnParsedMessage.emit(Message{Connection: ws_connection, Message: msg})
+		ws_connection.parent.OnParsedMessage.emit(IncomingMessage{Connection: ws_connection, Message: msg})
 		ws_connection.OnParsedMessage.emit(SocketMessage{Message: msg})
 		return
 	}
 
-	ws_connection.parent.OnMessage.emit(Message{Connection: ws_connection, Message: msg})
+	ws_connection.parent.OnMessage.emit(IncomingMessage{Connection: ws_connection, Message: msg})
 	ws_connection.OnMessage.emit(SocketMessage{Message: msg})
 }
 
@@ -278,10 +296,6 @@ func (ws_connection *WebsocketConnection) SendRequest(request any, response any,
 		params = *opt_params
 	}
 
-	if params.Timeout == 0 {
-		params.Timeout = -1
-	}
-
 	requestId := generateSecureRandomInt64()
 	newResponseAwaiter := requestResponseAwaiter{
 		channel:           make(chan []byte),
@@ -294,8 +308,8 @@ func (ws_connection *WebsocketConnection) SendRequest(request any, response any,
 	}()
 
 	ws_connection.requestResponseAwaiters.Mu.Lock()
-	defer ws_connection.requestResponseAwaiters.Mu.Unlock()
 	ws_connection.requestResponseAwaiters.Map[newResponseAwaiter.expectedRequestId] = newResponseAwaiter
+	ws_connection.requestResponseAwaiters.Mu.Unlock()
 
 	/////////////////////////////////////////
 	// Serialize user's msg into JSON
@@ -314,10 +328,15 @@ func (ws_connection *WebsocketConnection) SendRequest(request any, response any,
 	// Inject your internal fields
 	originalMap[ws_connection.parent.requestId_propertyName] = newResponseAwaiter.expectedRequestId
 
+	// TODO: remove this snippet
+	msg, _ := json.Marshal(originalMap)
+	fmt.Println("[SERVER] Sending request:", string(msg))
+	// TODO: remove this snippet
+
 	// Send the final map
 	ws_connection.writeMu.Lock()
-	defer ws_connection.writeMu.Unlock()
 	err = ws_connection.Conn.WriteJSON(originalMap)
+	ws_connection.writeMu.Unlock()
 	if err != nil {
 		return false, err
 	}
@@ -330,7 +349,7 @@ func (ws_connection *WebsocketConnection) SendRequest(request any, response any,
 
 	select {
 	case responseData := <-newResponseAwaiter.channel:
-		err := json.Unmarshal(responseData, &response)
+		err := json.Unmarshal(responseData, response)
 		return false, err
 	case <-timeoutChan:
 		// if timeout is nil, this case is never selected

@@ -1,6 +1,7 @@
 package gows
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -24,7 +25,7 @@ type WebsocketClient struct {
 	OnAnyMessage EventEmitter[SocketMessage]
 
 	// This is an eventEmitter for incoming requests from the server socket
-	OnRequest EventEmitter[SocketMessage]
+	OnRequest EventEmitter[IncomingRequest]
 
 	// This is an eventEmitter for incoming responses from the server to a request sent from the client
 	OnRequestResponse EventEmitter[SocketMessage]
@@ -53,9 +54,12 @@ func (ws_client *WebsocketClient) GetRequestIdProperty() string {
 }
 
 func NewWebsocketClient(url string) *WebsocketClient {
-	return &WebsocketClient{
-		URL: url,
+	ws_client := &WebsocketClient{
+		URL:                    url,
+		requestId_propertyName: "Id",
 	}
+	ws_client.requestResponseAwaiters.Map = make(map[int64]requestResponseAwaiter)
+	return ws_client
 }
 
 ///////////////////////////
@@ -101,20 +105,40 @@ func (ws_client *WebsocketClient) handleMessage(msg []byte) {
 	// Checking for private messages
 	//
 	// If found, send the []byte to the channel waiting for it
+	decoderInt64 := json.NewDecoder(bytes.NewReader(msg))
+	decoderInt64.UseNumber()
 	isRequestResponse := false
 	isRequest := false
-	var parsedData map[string]int64
-	err := json.Unmarshal(msg, &parsedData)
+	var parsedData map[string]interface{}
+	err := decoderInt64.Decode(&parsedData)
 	if err == nil {
-		received_requestId, exists := parsedData[ws_client.requestId_propertyName]
-		if exists {
+		received_requestId_interface, isPresent := parsedData[ws_client.requestId_propertyName]
+		var received_requestId int64
+		ok := false
+		if isPresent {
+			switch v := received_requestId_interface.(type) {
+			case json.Number:
+				received_requestId, err = v.Int64()
+				if err == nil {
+					ok = true
+				}
+			case float64:
+				received_requestId = int64(v)
+				ok = true
+			}
+		}
+		if ok {
 			ws_client.requestResponseAwaiters.Mu.Lock()
-			responseAwaiter, isPresent := ws_client.requestResponseAwaiters.Map[received_requestId]
-			if isPresent {
+			responseAwaiter, exists := ws_client.requestResponseAwaiters.Map[received_requestId]
+			ws_client.requestResponseAwaiters.Mu.Unlock()
+			fmt.Printf("[CLIENT] ResponseAwaiter: %v, exists: %v\n", responseAwaiter, exists)
+			if exists {
 				responseAwaiter.channel <- msg
 				isRequestResponse = true
+			} else {
+				ws_client.OnRequest.emit(IncomingRequest{requestId: received_requestId, propertyName: ws_client.requestId_propertyName, conn: ws_client.Conn, Data: msg})
+				isRequest = true
 			}
-			ws_client.requestResponseAwaiters.Mu.Unlock()
 		}
 	}
 	if isRequestResponse {
@@ -122,7 +146,6 @@ func (ws_client *WebsocketClient) handleMessage(msg []byte) {
 		return
 	}
 	if isRequest {
-		ws_client.OnRequest.emit(SocketMessage{Message: msg})
 		return
 	}
 
@@ -176,10 +199,6 @@ func (ws_client *WebsocketClient) SendRequest(request any, response any, opt_par
 		params = *opt_params
 	}
 
-	if params.Timeout == 0 {
-		params.Timeout = -1
-	}
-
 	requestId := generateSecureRandomInt64()
 	newResponseAwaiter := requestResponseAwaiter{
 		channel:           make(chan []byte),
@@ -192,8 +211,8 @@ func (ws_client *WebsocketClient) SendRequest(request any, response any, opt_par
 	}()
 
 	ws_client.requestResponseAwaiters.Mu.Lock()
-	defer ws_client.requestResponseAwaiters.Mu.Unlock()
 	ws_client.requestResponseAwaiters.Map[newResponseAwaiter.expectedRequestId] = newResponseAwaiter
+	ws_client.requestResponseAwaiters.Mu.Unlock()
 
 	/////////////////////////////////////////
 	// Serialize user's msg into JSON
@@ -212,10 +231,15 @@ func (ws_client *WebsocketClient) SendRequest(request any, response any, opt_par
 	// Inject your internal fields
 	originalMap[ws_client.requestId_propertyName] = newResponseAwaiter.expectedRequestId
 
+	// TODO: remove this snippet
+	msg, _ := json.Marshal(originalMap)
+	fmt.Println("[CLIENT] Sending request:", string(msg))
+	// TODO: remove this snippet
+
 	// Send the final map
 	ws_client.writeMu.Lock()
-	defer ws_client.writeMu.Unlock()
 	err = ws_client.Conn.WriteJSON(originalMap)
+	ws_client.writeMu.Unlock()
 	if err != nil {
 		return false, err
 	}
@@ -228,7 +252,7 @@ func (ws_client *WebsocketClient) SendRequest(request any, response any, opt_par
 
 	select {
 	case responseData := <-newResponseAwaiter.channel:
-		err := json.Unmarshal(responseData, &response)
+		err := json.Unmarshal(responseData, response)
 		return false, err
 	case <-timeoutChan:
 		// if timeout is nil, this case is never selected

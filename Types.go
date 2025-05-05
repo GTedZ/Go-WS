@@ -1,8 +1,11 @@
 package gows
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 type UpgradeError struct {
@@ -21,9 +24,65 @@ type CloseEvent struct {
 	Text       string
 }
 
-type Message struct {
+type IncomingMessage struct {
 	Connection *WebsocketConnection
 	Message    []byte
+}
+
+type ServerIncomingRequest struct {
+	requestId    int64
+	propertyName string
+
+	WebsocketConnection *WebsocketConnection
+	Data                []byte
+}
+
+func (request *ServerIncomingRequest) Reply(data interface{}) error {
+	// Serialize user's msg into JSON
+	originalJson, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	// Deserialize into a map
+	var originalMap map[string]interface{}
+	err = json.Unmarshal(originalJson, &originalMap)
+	if err != nil {
+		return err
+	}
+
+	// Inject your internal fields
+	originalMap[request.propertyName] = request.requestId
+
+	return request.WebsocketConnection.SendJSON(originalMap)
+}
+
+type IncomingRequest struct {
+	requestId    int64
+	propertyName string
+	conn         *websocket.Conn
+
+	Data []byte
+}
+
+func (request *IncomingRequest) Reply(data interface{}) error {
+	// Serialize user's msg into JSON
+	originalJson, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	// Deserialize into a map
+	var originalMap map[string]interface{}
+	err = json.Unmarshal(originalJson, &originalMap)
+	if err != nil {
+		return err
+	}
+
+	// Inject your internal fields
+	originalMap[request.propertyName] = request.requestId
+
+	return request.conn.WriteJSON(originalMap)
 }
 
 ///
