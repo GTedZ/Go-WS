@@ -7,7 +7,7 @@ import (
 )
 
 // Parser and Callback types
-type ParserFunc[T any] func([]byte) (T, bool)
+type ParserFunc[T any] func([]byte) (bool, T)
 type CallbackFunc[T any] func(T)
 
 // messageHandler interface to unify all handler types
@@ -22,7 +22,7 @@ type typedHandler[T any] struct {
 }
 
 func (h typedHandler[T]) tryParseAndCallback(data []byte) bool {
-	if val, ok := h.parser(data); ok {
+	if ok, val := h.parser(data); ok {
 		h.callback(val)
 		return true
 	}
@@ -43,14 +43,14 @@ func RegisterMessageParserCallback[T any](r *messageParsers_Registry, parser Par
 	defer r.mu.Unlock()
 
 	if parser == nil {
-		parser = func(b []byte) (*T, bool) {
+		parser = func(b []byte) (bool, *T) {
 			var v T
 			err := json.Unmarshal(b, &v)
 			if err != nil {
-				return nil, false
+				return false, nil
 			}
 
-			return &v, true
+			return true, &v
 		}
 	}
 

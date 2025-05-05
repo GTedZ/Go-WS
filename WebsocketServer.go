@@ -195,6 +195,16 @@ type WebsocketConnection struct {
 		Mu  sync.Mutex
 		Map map[int64]requestResponseAwaiter
 	}
+
+	// # Not used by library
+	//
+	// This is simply left to the developer to use as they please
+	//
+	// In the case of complex AllowOrigin configurations, this can help store metadata to match a connection to a user or any application-logic data
+	CustomData struct {
+		Mu  sync.Mutex
+		Map map[string]string
+	}
 }
 
 func (ws_connection *WebsocketConnection) Close() error {
