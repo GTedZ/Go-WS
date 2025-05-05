@@ -1,8 +1,7 @@
 # Go-WS: A High-Level WebSocket Library for Go
 
-Go-WS is a robust and ergonomic wrapper around Gorilla WebSocket, designed to simplify and accelerate WebSocket communication for both server and client implementations in Go. It introduces high-level event emitters, request-response abstractions, and message parsing logic, making it ideal for building scalable real-time applications.
-
-This README guides you through the usage of the library using the `server.go` example, which demonstrates all major features of Go-WS.
+Go-WS is wrapper built around [Gorilla WebSocket](https://github.com/gorilla/websocket), designed to simplify and accelerate WebSocket communication for both server and client implementations in Go. 
+It introduces high-level event emitters, request-response abstractions, and message parsing logic, making it ideal for building scalable real-time applications.
 
 ---
 
