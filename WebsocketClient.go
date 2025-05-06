@@ -131,7 +131,6 @@ func (ws_client *WebsocketClient) handleMessage(msg []byte) {
 			ws_client.requestResponseAwaiters.Mu.Lock()
 			responseAwaiter, exists := ws_client.requestResponseAwaiters.Map[received_requestId]
 			ws_client.requestResponseAwaiters.Mu.Unlock()
-			fmt.Printf("[CLIENT] ResponseAwaiter: %v, exists: %v\n", responseAwaiter, exists)
 			if exists {
 				responseAwaiter.channel <- msg
 				isRequestResponse = true
@@ -230,11 +229,6 @@ func (ws_client *WebsocketClient) SendRequest(request any, response any, opt_par
 
 	// Inject your internal fields
 	originalMap[ws_client.requestId_propertyName] = newResponseAwaiter.expectedRequestId
-
-	// TODO: remove this snippet
-	msg, _ := json.Marshal(originalMap)
-	fmt.Println("[CLIENT] Sending request:", string(msg))
-	// TODO: remove this snippet
 
 	// Send the final map
 	ws_client.writeMu.Lock()
