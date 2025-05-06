@@ -293,6 +293,10 @@ func (ws_connection *WebsocketConnection) handleMessage(msg []byte) {
 	ws_connection.OnMessage.emit(SocketMessage{Message: msg})
 }
 
+func (ws_connection *WebsocketConnection) SendPreparedMessage(pm *websocket.PreparedMessage) error {
+	return ws_connection.Conn.WritePreparedMessage(pm)
+}
+
 // SendRequest sends msg to the server and waits for a response or timeout (if set).
 //
 // The response is unmarshalled into the provided variable v.
