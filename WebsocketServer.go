@@ -100,6 +100,7 @@ func (ws_server *WebsocketServer) onConnect(w http.ResponseWriter, r *http.Reque
 		OrigRequest: r,
 	}
 	ws_connection.requestResponseAwaiters.Map = make(map[int64]requestResponseAwaiter)
+	ws_connection.CustomData.Map = make(map[string]string)
 	ws_server.nextClientId++
 
 	// Adding the client
