@@ -136,7 +136,6 @@ func (ws_server *WebsocketServer) onConnect(w http.ResponseWriter, r *http.Reque
 			if !exists {
 				break
 			}
-
 			continue
 		}
 

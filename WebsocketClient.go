@@ -92,6 +92,7 @@ func (ws_client *WebsocketClient) readMessages() {
 			if ws_client.closed {
 				break
 			}
+			continue
 		}
 
 		ws_client.OnAnyMessage.emit(SocketMessage{Message: msg})
