@@ -88,10 +88,10 @@ func (ws_client *WebsocketClient) readMessages() {
 	for {
 		_, msg, err := ws_client.Conn.ReadMessage()
 		if err != nil {
-			ws_client.OnError.emit(SocketError{Err: err})
 			if ws_client.closed {
 				break
 			}
+			ws_client.OnError.emit(SocketError{Err: err})
 			continue
 		}
 

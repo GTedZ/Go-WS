@@ -127,15 +127,15 @@ func (ws_server *WebsocketServer) onConnect(w http.ResponseWriter, r *http.Reque
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
-			ws_server.OnError.emit(Error{Connection: ws_connection, Err: err})
-			ws_connection.OnError.emit(SocketError{Err: err})
-
 			ws_server.Clients.Mu.Lock()
 			_, exists := ws_server.Clients.Map[ws_connection.id]
 			ws_server.Clients.Mu.Unlock()
 			if !exists {
 				break
 			}
+
+			ws_server.OnError.emit(Error{Connection: ws_connection, Err: err})
+			ws_connection.OnError.emit(SocketError{Err: err})
 			continue
 		}
 
