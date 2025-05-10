@@ -36,6 +36,12 @@ func (e *EventEmitter[T]) Emit(arg T) {
 	}
 }
 
+func (e *EventEmitter[T]) clear(arg T) {
+	for _, listener := range e.listeners {
+		e.Unsubscribe(listener)
+	}
+}
+
 // // For events where handlers return a value
 // type ReturnHandler[T any, R any] func(T) R
 

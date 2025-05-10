@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -79,9 +83,24 @@ func (ws_client *WebsocketClient) Connect() error {
 		return nil
 	})
 
+	ws_client.setupGracefulShutdown()
+
 	go ws_client.readMessages()
 
 	return nil
+}
+
+func (ws_client *WebsocketClient) setupGracefulShutdown() {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		log.Println("Shutdown signal received")
+
+		ws_client.Close()
+		os.Exit(0)
+	}()
 }
 
 func (ws_client *WebsocketClient) readMessages() {

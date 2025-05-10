@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -81,6 +85,8 @@ func NewWebSocketServer(checkOriginFunc func(r *http.Request) bool) *WebsocketSe
 	websocketServer.SetCheckOriginFunc(checkOriginFunc)
 	websocketServer.Clients.Map = make(map[int64]*WebsocketConnection)
 
+	websocketServer.setupGracefulShutdown()
+
 	return websocketServer
 }
 
@@ -144,6 +150,31 @@ func (ws_server *WebsocketServer) onConnect(w http.ResponseWriter, r *http.Reque
 
 		ws_connection.handleMessage(msg)
 	}
+}
+
+func (ws_server *WebsocketServer) setupGracefulShutdown() {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		log.Println("Shutdown signal received")
+
+		go func() {
+			time.Sleep(1 * time.Second)
+			for _, client := range ws_server.Clients.Map {
+				client.Close()
+			}
+		}()
+
+		ws_server.Clients.Mu.Lock()
+		defer ws_server.Clients.Mu.Unlock()
+		for _, client := range ws_server.Clients.Map {
+			client.Close()
+		}
+
+		os.Exit(0)
+	}()
 }
 
 // 'Listen' starts the WebSocket server and listens for incoming connections on the specified paths.
