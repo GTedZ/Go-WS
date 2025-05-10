@@ -119,13 +119,7 @@ func (ws_server *WebsocketServer) onConnect(w http.ResponseWriter, r *http.Reque
 
 	conn.SetCloseHandler(
 		func(code int, text string) error {
-			ws_server.Clients.Mu.Lock()
-			delete(ws_server.Clients.Map, ws_connection.id)
-			ws_server.Clients.Mu.Unlock()
-
-			ws_server.OnClose.emit(CloseEvent{Connection: ws_connection, Code: code, Text: text})
-			ws_connection.OnClose.emit(SocketCloseEvent{Code: code, Text: text})
-			return nil
+			return ws_server.onClose(ws_connection, code, text)
 		},
 	)
 
@@ -150,6 +144,16 @@ func (ws_server *WebsocketServer) onConnect(w http.ResponseWriter, r *http.Reque
 
 		ws_connection.handleMessage(msg)
 	}
+}
+
+func (ws_server *WebsocketServer) onClose(ws_connection *WebsocketConnection, code int, text string) error {
+	ws_server.Clients.Mu.Lock()
+	delete(ws_server.Clients.Map, ws_connection.id)
+	ws_server.Clients.Mu.Unlock()
+
+	ws_server.OnClose.emit(CloseEvent{Connection: ws_connection, Code: code, Text: text})
+	ws_connection.OnClose.emit(SocketCloseEvent{Code: code, Text: text})
+	return nil
 }
 
 func (ws_server *WebsocketServer) setupGracefulShutdown() {
@@ -239,7 +243,7 @@ type WebsocketConnection struct {
 }
 
 func (ws_connection *WebsocketConnection) Close() error {
-	return ws_connection.Conn.Close()
+	return ws_connection.parent.onClose(ws_connection, websocket.CloseNormalClosure, "Manual shutdown")
 }
 
 func (ws_connection *WebsocketConnection) SendText(msg string) error {

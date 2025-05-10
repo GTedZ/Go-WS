@@ -77,16 +77,18 @@ func (ws_client *WebsocketClient) Connect() error {
 	}
 	ws_client.Conn = conn
 
-	ws_client.Conn.SetCloseHandler(func(code int, text string) error {
-		ws_client.closed = true
-		ws_client.OnClose.emit(SocketCloseEvent{Code: code, Text: text})
-		return nil
-	})
+	ws_client.Conn.SetCloseHandler(ws_client.onClose)
 
 	ws_client.setupGracefulShutdown()
 
 	go ws_client.readMessages()
 
+	return nil
+}
+
+func (ws_client *WebsocketClient) onClose(code int, text string) error {
+	ws_client.closed = true
+	ws_client.OnClose.emit(SocketCloseEvent{Code: code, Text: text})
 	return nil
 }
 
@@ -190,7 +192,7 @@ func (ws_client *WebsocketClient) IsClosed() bool {
 }
 
 func (ws_client *WebsocketClient) Close() error {
-	return ws_client.Conn.Close()
+	return ws_client.onClose(websocket.CloseNormalClosure, "Manual shutdown")
 }
 
 func (ws_client *WebsocketClient) SendText(msg string) error {
